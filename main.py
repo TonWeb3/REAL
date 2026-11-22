@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 import sys
 import time
 import json
@@ -18,7 +19,7 @@ if sys.platform != "win32":
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 import httpx
 
@@ -350,19 +351,52 @@ def log_message(msg: str):
 
 clob_trader.set_log_hook(log_message)  # LIVE WALLET / LIVE SIGNER lines go to the app log
 
+import threading
+
+_state_save_lock = threading.Lock()
+_state_save_ev = threading.Event()
+_state_save_payload: List[Optional[str]] = [None]
+_state_save_thread_started = False
+
+
+def _state_writer_worker():
+    while True:
+        _state_save_ev.wait()
+        _state_save_ev.clear()
+        with _state_save_lock:
+            payload = _state_save_payload[0]
+            _state_save_payload[0] = None
+        if payload is None:
+            continue
+        try:
+            tmp_path = STATE_PATH + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(payload)
+            os.replace(tmp_path, STATE_PATH)
+        except Exception as e:
+            print(f"Error saving state: {e}")
+
+
 def save_state():
+    global _state_save_thread_started
     try:
         data_to_save = {
             "paper_balance": state["paper_balance"],
             "live_balance": state.get("live_balance", 0.0),
-            "active_trades": state["active_trades"],
-            "trade_history": state["trade_history"],
+            "active_trades": list(state["active_trades"]),
+            "trade_history": list(state["trade_history"]),
             "last_trade_side": state["last_trade_side"],
             "last_withdrawal": state.get("last_withdrawal"),
-            "ls_maker_open": state.get("ls_maker_open", []),  # PATCH: longshot maker — cancelled at the next start
+            "ls_maker_open": list(state.get("ls_maker_open", [])),  # PATCH: longshot maker — cancelled at the next start
         }
-        with open(STATE_PATH, "w") as f:
-            json.dump(data_to_save, f, indent=2)
+        payload = json.dumps(data_to_save, indent=2)
+        with _state_save_lock:
+            _state_save_payload[0] = payload
+            if not _state_save_thread_started:
+                _state_save_thread_started = True
+                t = threading.Thread(target=_state_writer_worker, name="state-writer", daemon=True)
+                t.start()
+        _state_save_ev.set()
     except Exception as e:
         print(f"Error saving state: {e}")
 
@@ -385,6 +419,13 @@ def load_state():
                 log_message(f"State loaded from {STATE_PATH} (mode: {state['trading_mode']}, paper_balance: ${state['paper_balance']:.2f})")
     except Exception as e:
         print(f"Error loading state: {e}")
+        if os.path.exists(STATE_PATH):
+            try:
+                backup = f"{STATE_PATH}.corrupt.{int(time.time())}"
+                shutil.copy2(STATE_PATH, backup)
+                print(f"Backed up unreadable state file to {backup}")
+            except Exception as be:
+                print(f"Failed to back up unreadable state file: {be}")
 
 # ── Telegram notifications & poller ───────────────────────────────────────────
 def _normalize_subscriber(s: Any) -> Optional[Dict[str, Any]]:
@@ -583,14 +624,18 @@ async def broadcast_state():
         print(f"broadcast_state json serialization error: {e}")
         return
 
-    dead = set()
-    for ws in list(_ws_clients):
+    clients = list(_ws_clients)
+    async def _send_one(ws):
         try:
-            await ws.send_text(msg)
+            await asyncio.wait_for(ws.send_text(msg), timeout=2.0)
+            return None
         except Exception:
-            dead.add(ws)
-    for ws in dead:
-        _ws_clients.discard(ws)
+            return ws
+
+    results = await asyncio.gather(*(_send_one(ws) for ws in clients), return_exceptions=True)
+    for r in results:
+        if isinstance(r, WebSocket):
+            _ws_clients.discard(r)
 
 # ── Background task streams ───────────────────────────────────────────────────
 # ── Inputs settings (TOGGLE: inputs) ──────────────────────────────────────────
@@ -1960,7 +2005,7 @@ def _le_final_ctx(ctx: Optional[Dict[str, Any]], now: float) -> Optional[Dict[st
     if end_ts is None or now >= end_ts - floor_s:
         return None
     if ctx:
-        return use if now >= end_ts - 5.0 else None          # the regular check would stop here
+        return None          # live ctx: let evaluate_entry run regular + engine checks down to end_ts
     return use if now >= end_ts - 6.5 and now - use.get("built_at", 0) <= LE_FINAL_CTX_MAX_AGE_S else None
 
 
@@ -2477,15 +2522,26 @@ async def execute_trade(decision: Dict[str, Any], market_prices: Dict[str, Any],
                     or (window_start_ms is not None and t.get("window_start_ms") == int(window_start_ms)))
 
         if is_ls:
+            _recent_hist = state.get("trade_history", [])[-30:]
             has_reg = any(
                 not _is_longshot(t) and _same_window(t)
-                for t in (state.get("active_trades", []) + state.get("trade_history", []))
+                for t in (state.get("active_trades", []) + _recent_hist)
             )
+            _skip_win = window_start_ms or cur_mkt_id or cur_slug
+            if not hasattr(execute_trade, "_ls_skip_logged"):
+                execute_trade._ls_skip_logged = set()
+            def _log_ls_skip_once(code: str, msg: str):
+                k = (_skip_win, code)
+                if k not in execute_trade._ls_skip_logged:
+                    if len(execute_trade._ls_skip_logged) > 200:
+                        execute_trade._ls_skip_logged.clear()
+                    execute_trade._ls_skip_logged.add(k)
+                    log_message(msg)
             if longshot.only_without_regular_trade_on(ls_cfg) and has_reg:
-                log_message("LONGSHOT skipped: regular trade already exists in this window (only_without_regular_trade=on).")
+                _log_ls_skip_once("has_reg", "LONGSHOT skipped: regular trade already exists in this window (only_without_regular_trade=on).")
                 return "has_regular_trade"
             if longshot.require_regular_trade_on(ls_cfg) and not has_reg:
-                log_message("LONGSHOT skipped: regular trade must happen before longshot in this window.")
+                _log_ls_skip_once("no_reg", "LONGSHOT skipped: regular trade must happen before longshot in this window.")
                 return "no_regular_trade"
 
             if longshot.one_at_a_time_on(ls_cfg):
@@ -2496,7 +2552,7 @@ async def execute_trade(decision: Dict[str, Any], market_prices: Dict[str, Any],
                 maker_rests = (longshot.placed_locks(ls_cfg) and open_reason != "longshot_maker" and window_start_ms is not None
                                and ls_maker_mgr.has_active_bid(int(window_start_ms)))
                 if has_any_ls or ls_entered or maker_rests:
-                    log_message(f"LONGSHOT skipped: Exclusive mode active and another longshot is already placed in this window.")
+                    _log_ls_skip_once("one_at_a_time", "LONGSHOT skipped: Exclusive mode active and another longshot is already placed in this window.")
                     return "slot_busy"
             else:
                 n_ls = sum(1 for t in state["active_trades"] if _is_longshot(t) and not _is_ls_maker(t) and _same_window(t))
@@ -4102,7 +4158,7 @@ async def evaluate_longshot(reason: str = "event"):
 
             # ── Regular trade prerequisite / exclusion (controlled by longshot toggles) ──
             reg_trades_in_window = [
-                t for t in (state.get("active_trades", []) + state.get("trade_history", []))
+                t for t in (state.get("active_trades", []) + state.get("trade_history", [])[-30:])
                 if not _is_longshot(t) and (
                     (cur_mkt_id and str(t.get("market_id")) == cur_mkt_id)
                     or (cur_slug and t.get("market_slug") == cur_slug)
@@ -4733,21 +4789,11 @@ async def update_loop():
                 longshot.record_price(time.time(), current_price)
 
             closes = [c["close"] for c in klines_1m if c.get("close")]
-            rsi_now = indicators.compute_rsi(closes, settings.RSI_PERIOD) if len(closes) >= 15 else state.get("last_rsi")
-            if rsi_now is not None:
-                state["last_rsi"] = rsi_now
+            rsi_now = indicators.compute_rsi(closes, settings.RSI_PERIOD) if len(closes) >= 15 else None
 
-            consec = indicators.count_consecutive(indicators.compute_heiken_ashi(klines_1m)) if len(klines_1m) >= 2 else (state.get("last_ha_1m") or {"color": None, "count": 0})
-            if consec.get("color"):
-                state["last_ha_1m"] = consec
+            consec = indicators.count_consecutive(indicators.compute_heiken_ashi(klines_1m)) if len(klines_1m) >= 2 else {"color": None, "count": 0}
 
-            consec_5m = {"color": None, "count": 0}
-            if len(klines_5m) >= 2:
-                consec_5m = indicators.count_consecutive(indicators.compute_heiken_ashi(klines_5m))
-                if consec_5m.get("color"):
-                    state["last_ha_5m"] = consec_5m
-            elif state.get("last_ha_5m"):
-                consec_5m = state["last_ha_5m"]
+            consec_5m = indicators.count_consecutive(indicators.compute_heiken_ashi(klines_5m)) if len(klines_5m) >= 2 else {"color": None, "count": 0}
 
             EB = engines.EXHAUSTION_BARS
             def _is(color, count, want):
@@ -5510,8 +5556,8 @@ async def websocket_endpoint(websocket: WebSocket):
             "data": state["latest_data"],
             "logs": state["logs"][-30:],
             "log_seq": state["log_seq"],
-        })
-        await websocket.send_text(init_msg)
+        }, default=_json_default)
+        await asyncio.wait_for(websocket.send_text(init_msg), timeout=2.0)
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
@@ -5534,16 +5580,31 @@ async def get_settings_page(request: Request):
 async def get_latest():
     return state["latest_data"]
 
+def _read_log_lines_sync(path: str, full: bool) -> Optional[List[str]]:
+    if not os.path.exists(path):
+        return None
+    try:
+        if not full:
+            # Read only the tail (~64 KB) so large log files never stall or consume memory
+            size = os.path.getsize(path)
+            with open(path, "rb") as fb:
+                if size > 65536:
+                    fb.seek(size - 65536)
+                    fb.readline()  # discard partial first line
+                data_bytes = fb.read()
+            lines = [ln for ln in data_bytes.decode("utf-8", errors="ignore").splitlines() if ln.strip()]
+            return lines[-100:] if lines else None
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = [line.rstrip("\r\n") for line in f if line.strip()]
+            return lines if lines else None
+    except Exception:
+        return None
+
 @app.get("/api/logs")
 async def get_logs(full: bool = False):
-    if os.path.exists(LOG_FILE_PATH):
-        try:
-            with open(LOG_FILE_PATH, "r", encoding="utf-8", errors="ignore") as f:
-                lines = [line.rstrip("\r\n") for line in f if line.strip()]
-                if lines:
-                    return lines if full else lines[-100:]
-        except Exception:
-            pass
+    lines = await asyncio.to_thread(_read_log_lines_sync, LOG_FILE_PATH, full)
+    if lines:
+        return lines
     return state["logs"] if full else state["logs"][-100:]
 
 DOWNLOADABLE = {
@@ -5552,22 +5613,28 @@ DOWNLOADABLE = {
     "logs": (LOG_FILE_PATH, "text/plain"),
 }
 
-@app.get("/api/files")
-async def list_files():
+def _list_files_sync() -> List[Dict[str, Any]]:
     out = []
     for key, (path, _) in DOWNLOADABLE.items():
         exists = os.path.exists(path)
+        rows = None
+        if exists and path.endswith(".csv"):
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                rows = max(0, sum(1 for _ in f) - 1)
         out.append({
             "key": key,
             "name": os.path.basename(path),
             "exists": exists,
             "size": os.path.getsize(path) if exists else 0,
-            "rows": (max(0, sum(1 for _ in open(path, encoding="utf-8", errors="ignore")) - 1)
-                     if exists and path.endswith(".csv") else None),
+            "rows": rows,
             "modified": (datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
                          if exists else None),
         })
     return out
+
+@app.get("/api/files")
+async def list_files():
+    return await asyncio.to_thread(_list_files_sync)
 
 @app.get("/api/download/{key}")
 async def download_file(key: str):
@@ -5831,7 +5898,7 @@ async def get_settings():
 
     return {
         "mode": getattr(settings, "MODE", "hybrid"),
-        "paper_balance_usd": float(state.get("paper_balance") or getattr(settings, "PAPER_BALANCE_USD", 1000.0)),
+        "paper_balance_usd": float(getattr(settings, "PAPER_BALANCE_USD", 1000.0) or 1000.0),
         "has_live_creds": bool(settings.PRIVATE_KEY),
         "private_key": masked_pk,
         "live": {
@@ -5902,6 +5969,11 @@ async def get_settings():
 async def post_settings(new_settings: Dict[str, Any]):
     global binance_stream, polymarket_ws_stream, chainlink_ws_stream, binance_kline_1m, binance_kline_5m
     old_symbol = settings.SYMBOL
+    old_paper_cfg = float(getattr(settings, "PAPER_BALANCE_USD", 1000.0) or 1000.0)
+    old_pk = getattr(settings, "PRIVATE_KEY", "") or ""
+    old_funder = getattr(settings, "FUNDER_ADDRESS", "") or ""
+    old_relayer = getattr(settings, "RELAYER_API_KEY", "") or ""
+    old_alchemy = getattr(settings, "ALCHEMY_API_KEY", "") or ""
     try:   # TOGGLE: inputs — read before anything is saved or changed; a value that can't be read refuses the save
         _in_new = _in_read(new_settings.get("inputs"))
     except ValueError as e:
@@ -6086,7 +6158,7 @@ async def post_settings(new_settings: Dict[str, Any]):
     if "paper_balance_usd" in new_settings:
         try:
             pb = float(new_settings["paper_balance_usd"])
-            if pb > 0:
+            if pb > 0 and abs(pb - old_paper_cfg) > 1e-9:
                 settings.PAPER_BALANCE_USD = pb
                 state["paper_balance"] = pb
                 merged_cfg["paper_balance_usd"] = pb
@@ -6294,7 +6366,13 @@ async def post_settings(new_settings: Dict[str, Any]):
         if tok and "..." not in tok and tok.lower() != "set":
             settings.TELEGRAM_BOT_TOKEN = str(tok).strip()
 
-    clob_trader.reset()
+    if (
+        (getattr(settings, "PRIVATE_KEY", "") or "") != old_pk
+        or (getattr(settings, "FUNDER_ADDRESS", "") or "") != old_funder
+        or (getattr(settings, "RELAYER_API_KEY", "") or "") != old_relayer
+        or (getattr(settings, "ALCHEMY_API_KEY", "") or "") != old_alchemy
+    ):
+        clob_trader.reset()
 
     if settings.SYMBOL != old_symbol:
         basis_tracker.reset()
@@ -6505,9 +6583,12 @@ async def health():
 
 @app.get("/history")
 async def get_history():
-    return state["trade_history"]
+    return Response(
+        content=json.dumps(state["trade_history"], default=_json_default),
+        media_type="application/json",
+    )
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", 8004))
+    port = int(os.getenv("PORT", 8031))
     uvicorn.run(app, host="0.0.0.0", port=port)

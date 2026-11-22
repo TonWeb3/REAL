@@ -60,7 +60,7 @@
     "max_retries": 4,
     "retry_interval_ms": 100,
     "count_fee": true,
-    "fee_rate": 0.07
+    "fee_rate": 0.05
   },
   "longshot": {
     "strategy_mode": "aggressive",

@@ -3,6 +3,36 @@ import json
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Dict, Any, Optional, Tuple
 
+def _to_bool(val: Any, default: bool = False) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off", ""):
+            return False
+    return default
+
+def _to_float(val: Any, default: float) -> float:
+    try:
+        if isinstance(val, bool) or val is None or (isinstance(val, str) and not val.strip()):
+            return default
+        n = float(val)
+        return default if (n != n or n in (float("inf"), float("-inf"))) else n
+    except (ValueError, TypeError):
+        return default
+
+def _to_int(val: Any, default: int) -> int:
+    try:
+        if isinstance(val, bool) or val is None or (isinstance(val, str) and not val.strip()):
+            return default
+        return int(float(val))
+    except (ValueError, TypeError):
+        return default
+
 # TOGGLE: entry quote log — config.json "entry_quote". A log line per regular paper bet; it changes no order and no bet.
 ENTRY_QUOTE_DEFAULTS: Dict[str, Any] = {
     "log": False,     # True: the quote part of the ENTRY QUOTE line: the paper price against the live book at that instant and after
@@ -276,9 +306,9 @@ def load_settings():
 
             if "live" in config_data:
                 live = config_data["live"]
-                if "max_slippage" in live: base_settings.CLOB_MAX_SLIPPAGE = float(live["max_slippage"])
-                if "exit_max_retries" in live: base_settings.EXIT_MAX_RETRIES = int(live["exit_max_retries"])
-                if "allow_partial_fill" in live: base_settings.CLOB_ALLOW_PARTIAL_FILL = bool(live["allow_partial_fill"])
+                if "max_slippage" in live: base_settings.CLOB_MAX_SLIPPAGE = _to_float(live["max_slippage"], base_settings.CLOB_MAX_SLIPPAGE)
+                if "exit_max_retries" in live: base_settings.EXIT_MAX_RETRIES = _to_int(live["exit_max_retries"], base_settings.EXIT_MAX_RETRIES)
+                if "allow_partial_fill" in live: base_settings.CLOB_ALLOW_PARTIAL_FILL = _to_bool(live["allow_partial_fill"], base_settings.CLOB_ALLOW_PARTIAL_FILL)
                 if "order_signer" in live: base_settings.ORDER_SIGNER = normalize_order_signer(live["order_signer"]) or "auto"
                 if "funder_address" in live and live["funder_address"]:
                     base_settings.FUNDER_ADDRESS = normalize_funder_address(live["funder_address"])
@@ -331,48 +361,45 @@ def load_settings():
 
             if "ev" in config_data:
                 ev = config_data["ev"]
-                if "ev_threshold" in ev: base_settings.EV_THRESHOLD = float(ev["ev_threshold"])
-                if "min_prob" in ev: base_settings.MIN_PROB_EV = float(ev["min_prob"])
-                if "min_book_liquidity_usd" in ev: base_settings.MIN_BOOK_LIQUIDITY_USD = float(ev["min_book_liquidity_usd"])
-                if "max_book_age_s" in ev: base_settings.MAX_BOOK_AGE_S = float(ev["max_book_age_s"])
+                if "ev_threshold" in ev: base_settings.EV_THRESHOLD = _to_float(ev["ev_threshold"], base_settings.EV_THRESHOLD)
+                if "min_prob" in ev: base_settings.MIN_PROB_EV = _to_float(ev["min_prob"], base_settings.MIN_PROB_EV)
+                if "min_book_liquidity_usd" in ev: base_settings.MIN_BOOK_LIQUIDITY_USD = _to_float(ev["min_book_liquidity_usd"], base_settings.MIN_BOOK_LIQUIDITY_USD)
+                if "max_book_age_s" in ev: base_settings.MAX_BOOK_AGE_S = _to_float(ev["max_book_age_s"], base_settings.MAX_BOOK_AGE_S)
                 if "max_odds_enabled" in ev:
-                    base_settings.MAX_ODDS_ENABLED = str(ev["max_odds_enabled"]).strip().lower() in ("true", "1", "yes", "on")
+                    base_settings.MAX_ODDS_ENABLED = _to_bool(ev["max_odds_enabled"], base_settings.MAX_ODDS_ENABLED)
                 if "max_odds_cents" in ev:
-                    try:
-                        base_settings.MAX_ODDS_CENTS = float(ev["max_odds_cents"])
-                    except (TypeError, ValueError):
-                        pass
+                    base_settings.MAX_ODDS_CENTS = _to_float(ev["max_odds_cents"], base_settings.MAX_ODDS_CENTS)
 
             if "settlement" in config_data:
                 st = config_data["settlement"]
                 if "authoritative_settle_wait_s" in st:
-                    base_settings.AUTHORITATIVE_SETTLE_WAIT_S = float(st["authoritative_settle_wait_s"])
+                    base_settings.AUTHORITATIVE_SETTLE_WAIT_S = _to_float(st["authoritative_settle_wait_s"], base_settings.AUTHORITATIVE_SETTLE_WAIT_S)
                 # PATCH: official results — true/false, also when written as text ("false" is off)
                 if "redeem_after_resolution" in st:
-                    base_settings.REDEEM_AFTER_RESOLUTION = str(st["redeem_after_resolution"]).strip().lower() in ("true", "1", "yes", "on")
+                    base_settings.REDEEM_AFTER_RESOLUTION = _to_bool(st["redeem_after_resolution"], base_settings.REDEEM_AFTER_RESOLUTION)
                 if "confirm_official" in st:
-                    base_settings.CONFIRM_OFFICIAL = str(st["confirm_official"]).strip().lower() in ("true", "1", "yes", "on")
+                    base_settings.CONFIRM_OFFICIAL = _to_bool(st["confirm_official"], base_settings.CONFIRM_OFFICIAL)
 
             if "flip" in config_data:
                 flip = config_data["flip"]
-                if "enabled" in flip: base_settings.FLIP_ENABLED = bool(flip["enabled"])
-                if "min_conviction" in flip: base_settings.FLIP_MIN_CONVICTION = float(flip["min_conviction"])
-                if "min_minutes_left" in flip: base_settings.FLIP_MIN_MINUTES_LEFT = float(flip["min_minutes_left"])
+                if "enabled" in flip: base_settings.FLIP_ENABLED = _to_bool(flip["enabled"], base_settings.FLIP_ENABLED)
+                if "min_conviction" in flip: base_settings.FLIP_MIN_CONVICTION = _to_float(flip["min_conviction"], base_settings.FLIP_MIN_CONVICTION)
+                if "min_minutes_left" in flip: base_settings.FLIP_MIN_MINUTES_LEFT = _to_float(flip["min_minutes_left"], base_settings.FLIP_MIN_MINUTES_LEFT)
 
             if "capital_extractor" in config_data:
                 ce = config_data["capital_extractor"]
-                if "enabled" in ce: base_settings.AUTO_WITHDRAW_ENABLED = bool(ce["enabled"])
-                if "trigger_balance" in ce: base_settings.WITHDRAW_TRIGGER_BALANCE = float(ce["trigger_balance"])
-                if "withdraw_amount" in ce: base_settings.WITHDRAW_AMOUNT = float(ce["withdraw_amount"])
+                if "enabled" in ce: base_settings.AUTO_WITHDRAW_ENABLED = _to_bool(ce["enabled"], base_settings.AUTO_WITHDRAW_ENABLED)
+                if "trigger_balance" in ce: base_settings.WITHDRAW_TRIGGER_BALANCE = _to_float(ce["trigger_balance"], base_settings.WITHDRAW_TRIGGER_BALANCE)
+                if "withdraw_amount" in ce: base_settings.WITHDRAW_AMOUNT = _to_float(ce["withdraw_amount"], base_settings.WITHDRAW_AMOUNT)
                 addr = ce.get("withdraw_address") if "withdraw_address" in ce else ce.get("recipient_address")
                 if addr is not None: base_settings.WITHDRAW_ADDRESS = str(addr).strip()
                 ar = ce.get("auto_resume_after_withdrawal") if "auto_resume_after_withdrawal" in ce else ce.get("auto_resume")
-                if ar is not None: base_settings.WITHDRAW_AUTO_RESUME = bool(ar)
+                if ar is not None: base_settings.WITHDRAW_AUTO_RESUME = _to_bool(ar, base_settings.WITHDRAW_AUTO_RESUME)
                 if "resume_after" in ce: base_settings.WITHDRAW_RESUME_AFTER = str(ce["resume_after"]).strip()
 
             if "telegram" in config_data:
                 tg = config_data["telegram"]
-                if "enabled" in tg: base_settings.TELEGRAM_ENABLED = bool(tg["enabled"])
+                if "enabled" in tg: base_settings.TELEGRAM_ENABLED = _to_bool(tg["enabled"], base_settings.TELEGRAM_ENABLED)
                 if "bot_token" in tg: base_settings.TELEGRAM_BOT_TOKEN = str(tg["bot_token"]).strip()
 
             # TOGGLE: entry quote log — config.json "entry_quote". A value that can't be read stays as it comes, with a warning.
@@ -401,15 +428,15 @@ def load_settings():
 
             # Legacy flat keys fallback
             if "auto_withdraw_enabled" in config_data and "capital_extractor" not in config_data:
-                base_settings.AUTO_WITHDRAW_ENABLED = bool(config_data["auto_withdraw_enabled"])
+                base_settings.AUTO_WITHDRAW_ENABLED = _to_bool(config_data["auto_withdraw_enabled"], base_settings.AUTO_WITHDRAW_ENABLED)
             if "withdraw_trigger_balance" in config_data and "capital_extractor" not in config_data:
-                base_settings.WITHDRAW_TRIGGER_BALANCE = float(config_data["withdraw_trigger_balance"])
+                base_settings.WITHDRAW_TRIGGER_BALANCE = _to_float(config_data["withdraw_trigger_balance"], base_settings.WITHDRAW_TRIGGER_BALANCE)
             if "withdraw_amount" in config_data and "capital_extractor" not in config_data:
-                base_settings.WITHDRAW_AMOUNT = float(config_data["withdraw_amount"])
+                base_settings.WITHDRAW_AMOUNT = _to_float(config_data["withdraw_amount"], base_settings.WITHDRAW_AMOUNT)
             if "withdraw_address" in config_data and "capital_extractor" not in config_data:
                 base_settings.WITHDRAW_ADDRESS = str(config_data["withdraw_address"]).strip()
             if "telegram_enabled" in config_data and "telegram" not in config_data:
-                base_settings.TELEGRAM_ENABLED = bool(config_data["telegram_enabled"])
+                base_settings.TELEGRAM_ENABLED = _to_bool(config_data["telegram_enabled"], base_settings.TELEGRAM_ENABLED)
             if "telegram_bot_token" in config_data and "telegram" not in config_data:
                 base_settings.TELEGRAM_BOT_TOKEN = str(config_data["telegram_bot_token"]).strip()
 

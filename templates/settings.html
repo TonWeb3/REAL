@@ -1358,16 +1358,17 @@
                         }
                     }
                     if (this.form.underdog) {
+                        const _num = (v, d) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v))) ? d : Number(v);
                         this.form.underdog.enabled = !!this.form.underdog.enabled;
-                        this.form.underdog.max_price = Number(this.form.underdog.max_price) || 0.07;
-                        this.form.underdog.min_prob = Number(this.form.underdog.min_prob) || 0.10;
-                        this.form.underdog.min_ev = Number(this.form.underdog.min_ev) || 0.02;
-                        this.form.underdog.max_sigma_distance = Number(this.form.underdog.max_sigma_distance) || 2.0;
+                        this.form.underdog.max_price = _num(this.form.underdog.max_price, 0.07);
+                        this.form.underdog.min_prob = _num(this.form.underdog.min_prob, 0.10);
+                        this.form.underdog.min_ev = _num(this.form.underdog.min_ev, 0.02);
+                        this.form.underdog.max_sigma_distance = _num(this.form.underdog.max_sigma_distance, 2.0);
                         this.form.underdog.momentum_filter = !!this.form.underdog.momentum_filter;
-                        this.form.underdog.momentum_lookback_s = Number(this.form.underdog.momentum_lookback_s) || 10.0;
+                        this.form.underdog.momentum_lookback_s = _num(this.form.underdog.momentum_lookback_s, 10.0);
                         this.form.underdog.tp_sl_enabled = !!this.form.underdog.tp_sl_enabled;
-                        this.form.underdog.take_profit_cents = Number(this.form.underdog.take_profit_cents) || 25.0;
-                        this.form.underdog.stop_loss_pct = Number(this.form.underdog.stop_loss_pct) || 50.0;
+                        this.form.underdog.take_profit_cents = _num(this.form.underdog.take_profit_cents, 25.0);
+                        this.form.underdog.stop_loss_pct = _num(this.form.underdog.stop_loss_pct, 50.0);
                     }
                     // Sanitize invalid non-0x withdraw address before sending
                     let w = (this.form.capital_extractor?.withdraw_address || '').trim();

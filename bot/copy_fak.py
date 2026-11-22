@@ -34,7 +34,7 @@ DEFAULTS: Dict[str, Any] = {
     "max_retries": 5,          # retry up to 5 times (matches FAK-main)
     "retry_interval_ms": 300,  # 300ms between attempts (matches FAK-main)
     "count_fee": True,         # book Polymarket's taker fee with each fill (true net balance tracking)
-    "fee_rate": 0.07,          # Polymarket's taker fee rate for crypto markets
+    "fee_rate": 0.05,          # Polymarket's taker fee rate for crypto markets (Nov 2026 schedule)
 }
 
 # key: (lowest, highest, what a refusal calls it)
@@ -178,7 +178,7 @@ def order_price(paper: float, cfg: Optional[Dict[str, Any]] = None, extra_slip: 
     return round(min(0.99, max(0.01, p + cap / 100.0)), 4)
 
 
-def taker_fee(shares: float, price: float, rate: float = 0.07) -> float:
+def taker_fee(shares: float, price: float, rate: float = 0.05) -> float:
     """Polymarket's taker fee for crypto markets: shares x rate x price x (1 - price).
     Charged in USDC on top of the fill."""
     p = max(0.0, min(1.0, float(price)))
