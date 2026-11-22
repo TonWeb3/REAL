@@ -1,0 +1,152 @@
+{
+  "mode": "paper",
+  "paper_balance_usd": 1000.0,
+  "private_key": "",
+  "live": {
+    "funder_address": "",
+    "relayer_api_key": "",
+    "alchemy_api_key": "DfkvQ854X-Kg4-ytU2sG0",
+    "order_signer": "auto",
+    "max_slippage": 0.05,
+    "exit_max_retries": 5,
+    "allow_partial_fill": false
+  },
+  "trading": {
+    "symbol": "BTCUSDT",
+    "binance_base_url": "https://api.binance.com",
+    "candle_window_minutes": 15,
+    "poll_interval_ms": 1000,
+    "risk_type": "percent",
+    "risk_value": 10
+  },
+  "polymarket": {
+    "series_id": "10192",
+    "series_slug": "btc-up-or-down-15m",
+    "gamma_base_url": "https://gamma-api.polymarket.com",
+    "clob_base_url": "https://clob.polymarket.com",
+    "live_ws_url": "wss://ws-live-data.polymarket.com",
+    "auto_select_latest": true,
+    "up_label": "Up",
+    "down_label": "Down"
+  },
+  "ev": {
+    "ev_threshold": 0.04,
+    "min_prob": 0.55,
+    "min_book_liquidity_usd": 20,
+    "max_book_age_s": 3,
+    "max_odds_enabled": false,
+    "max_odds_cents": 25
+  },
+  "underdog": {
+    "enabled": false,
+    "max_price": 0.07,
+    "min_prob": 0.1,
+    "min_ev": 0.02,
+    "max_sigma_distance": 2.0,
+    "momentum_filter": true,
+    "momentum_lookback_s": 10.0,
+    "tp_sl_enabled": true,
+    "take_profit_cents": 25.0,
+    "stop_loss_pct": 50.0,
+    "min_book_liquidity_usd": 20.0
+  },
+  "copy_fak": {
+    "enabled": true,
+    "order_type": "FOK",
+    "cap_cents": 5.0,
+    "high_cap_cents": 5.0,
+    "high_from_price": 0.55,
+    "stake_pct": 0.0,
+    "max_retries": 4,
+    "retry_interval_ms": 100,
+    "count_fee": true,
+    "fee_rate": 0.07
+  },
+  "longshot": {
+    "strategy_mode": "aggressive",
+    "require_regular_trade": true,
+    "only_without_regular_trade": false,
+    "one_at_a_time": true,
+    "one_at_a_time_rule": "taken",
+    "max_per_window": 1,
+    "look_s": 60.0,
+    "cutoff_s": 3.0,
+    "follow": "any",
+    "order_type": "FOK",
+    "sniper_enabled": true,
+    "sniper_order_type": "FOK",
+    "sniper_stake_pct": 1.0,
+    "sniper_max_price": 0.04,
+    "maker_enabled": true,
+    "maker_order_type": "GTD",
+    "maker_stake_pct": 1.0,
+    "engine_enabled": true,
+    "engine_max_price": 0.1,
+    "engine_min_seconds_left": 2.0,
+    "engine_cap_cents": 2.0,
+    "engine_stake_pct": 1.0,
+    "maker": {
+      "price": 0.01,
+      "min_prob": 0.2,
+      "max_ask": 1.0
+    },
+    "bands": {
+      "final": {
+        "ask_min": 0.01,
+        "ask_max": 0.03,
+        "max_price": 0.04
+      }
+    },
+    "engine_order_type": ""
+  },
+  "entry_quote": {
+    "log": true,
+    "timing": true,
+    "watch_s": 5.0
+  },
+  "settlement": {
+    "authoritative_settle_wait_s": 90,
+    "redeem_after_resolution": true,
+    "confirm_official": true
+  },
+  "flip": {
+    "enabled": false,
+    "min_conviction": 0.8,
+    "min_minutes_left": 9
+  },
+  "capital_extractor": {
+    "enabled": false,
+    "trigger_balance": 2000,
+    "withdraw_amount": 1000,
+    "withdraw_address": "",
+    "auto_resume_after_withdrawal": true,
+    "resume_after": "submitted"
+  },
+  "telegram": {
+    "enabled": false,
+    "bot_token": "839421...R-to"
+  },
+  "chainlink": {
+    "polygon_rpc_url": "https://polygon-rpc.com",
+    "polygon_wss_url": "wss://polygon-bor-rpc.publicnode.com",
+    "btc_usd_aggregator": "0xc907E116054Ad103354f2D350FD2514433D57F6f"
+  },
+  "price_stream": {
+    "enabled": true,
+    "prices": true,
+    "settle": true,
+    "chance": true,
+    "sd_floor_usd": 3.0,
+    "pick_tolerance_s": 2.0
+  },
+  "inputs": {
+    "delay_log": false,
+    "summary_min": 10.0,
+    "binance_both": false,
+    "binance_first": "",
+    "book_both": false,
+    "book_light": false,
+    "book_thread": false,
+    "top_of_book": false
+  }
+}
