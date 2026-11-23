@@ -1146,7 +1146,6 @@ class PolymarketClobMarketStream(_InBook):   # TOGGLE: inputs — _InBook, above
         self.last_ts: float = 0
         self.closed = False
         self._ws = None
-        self._subscribed_ids = set()
         self._in_setup()   # TOGGLE: inputs — what the inputs switches keep on this object (_InBook)
 
     def reset_books(self):
@@ -1167,35 +1166,20 @@ class PolymarketClobMarketStream(_InBook):   # TOGGLE: inputs — _InBook, above
             if self._in_twin is not None:   # TOGGLE: inputs — inputs.book_both: the second connection follows the same tokens
                 self._in_twin.update_assets(asset_ids)
             if self._ws and not self._ws.closed and self.asset_ids:
-                self._in_spawn(self._subscribe(self._ws, is_initial=False))   # TOGGLE: inputs — incremental subscribe on open WS
+                self._in_spawn(self._subscribe(self._ws))   # TOGGLE: inputs — inputs.book_thread: run on the socket's own loop
 
-    async def _subscribe(self, ws, is_initial: bool = True):
+    async def _subscribe(self, ws):
         if not self.asset_ids:
             return
+        sub_msg = {
+            "assets_ids": self.asset_ids,
+            "type": "market"
+        }
+        if in_on("top_of_book"):   # TOGGLE: inputs — inputs.top_of_book
+            sub_msg["custom_feature_enabled"] = True
         try:
-            if is_initial or not self._subscribed_ids:
-                sub_msg = {
-                    "assets_ids": self.asset_ids,
-                    "type": "market"
-                }
-                if in_on("top_of_book"):   # TOGGLE: inputs — inputs.top_of_book
-                    sub_msg["custom_feature_enabled"] = True
-                await ws.send_json(sub_msg)
-                self._subscribed_ids = set(self.asset_ids)
-                print(f"Subscribed to Polymarket CLOB Market WS for tokens: {self.asset_ids}")
-            else:
-                keep = set(self.asset_ids)
-                removed = [x for x in self._subscribed_ids if x not in keep]
-                added = [x for x in self.asset_ids if x not in self._subscribed_ids]
-                if removed:
-                    await ws.send_json({"assets_ids": removed, "operation": "unsubscribe"})
-                if added:
-                    inc_msg = {"assets_ids": added, "operation": "subscribe"}
-                    if in_on("top_of_book"):
-                        inc_msg["custom_feature_enabled"] = True
-                    await ws.send_json(inc_msg)
-                    print(f"Incrementally subscribed CLOB Market WS (+{len(added)}/-{len(removed)}): {added}")
-                self._subscribed_ids = keep
+            await ws.send_json(sub_msg)
+            print(f"Subscribed to Polymarket CLOB Market WS for tokens: {self.asset_ids}")
         except Exception as e:
             print(f"Failed to subscribe to CLOB market WS: {e}")
 
