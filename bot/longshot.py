@@ -166,13 +166,15 @@ def normalize(user_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         cfg["one_at_a_time_rule"] = rule
     else:
         errs.append('one_at_a_time_rule must be "taken" or "placed"')
-    raw_follow = str(cfg.get("follow") or "position").strip().lower()
+    raw_follow = str(cfg.get("follow") or "either").strip().lower()
     if raw_follow in ("position", "bet"):
         cfg["follow"] = "position"
-    elif raw_follow in ("any", "either", "prediction", "off"):
+    elif raw_follow == "either":
+        cfg["follow"] = "either"
+    elif raw_follow in ("any", "prediction", "off"):
         cfg["follow"] = "any"
     else:
-        cfg["follow"] = "position"
+        cfg["follow"] = "either"
     num(cfg, "sniper_stake_pct", "sniper stake %", 0, 100)      # PATCH: longshot stake
     num(cfg, "maker_stake_pct", "maker stake %", 0, 100)
     if "sniper_max_price" in cfg:

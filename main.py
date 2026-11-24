@@ -2005,7 +2005,7 @@ def _le_final_ctx(ctx: Optional[Dict[str, Any]], now: float) -> Optional[Dict[st
     if end_ts is None or now >= end_ts - floor_s:
         return None
     if ctx:
-        return None          # live ctx: let evaluate_entry run regular + engine checks down to end_ts
+        return use if now >= end_ts - 5.0 else None          # the regular check stops 5 s before the end
     return use if now >= end_ts - 6.5 and now - use.get("built_at", 0) <= LE_FINAL_CTX_MAX_AGE_S else None
 
 
@@ -2504,10 +2504,15 @@ async def execute_trade(decision: Dict[str, Any], market_prices: Dict[str, Any],
 
     cur_mkt_id = str(market.get("id") or "")
     cur_slug = str(market.get("slug") or "")
-    if kind == "regular" and _le_on() and _le_kind(decision, market_prices, market) == "longshot":
-        decision = _le_decision(decision, market_prices, market)
-        kind = "longshot"
-        open_reason = "longshot_engine"
+    if kind == "regular" and _le_on():
+        _le_k = _le_kind(decision, market_prices, market)
+        if _le_k == "longshot":
+            decision = _le_decision(decision, market_prices, market)
+            kind = "longshot"
+            open_reason = "longshot_engine"
+        elif _le_k is not None:
+            _le_log_skip(market, decision, market_prices, _le_k)
+            return _le_k
     is_ls = kind == "longshot"  # PATCH: longshot
     ls_cfg = settings.LONGSHOT if is_ls else {}
     slot_keys = _slot_keys(market, kind)
@@ -3943,13 +3948,13 @@ async def evaluate_entry(reason: str = "event"):
             state["trade_ctx"] = None
             return
 
-        # Market expiry check: trade can happen anytime down to candle close
+        # Strict market expiry check: stop regular entries 5 s before candle close
         mkt = ctx.get("market") or {}
         end_date = mkt.get("endDate")
         if end_date:
             try:
                 end_ts = datetime.fromisoformat(str(end_date).replace('Z', '+00:00')).timestamp()
-                if now >= end_ts:
+                if now >= end_ts - 5.0:
                     state["trade_ctx"] = None
                     return
             except Exception:
@@ -4095,6 +4100,23 @@ def _ls_follow_sides(ctx: Dict[str, Any], spot: float, secs_left: float, mode: O
             return [], "no regular trade in this window"
         uniq = sorted(set(open_sides))
         return uniq, f"follow existing {','.join(uniq)}"
+
+    if norm_mode == "either":
+        bet_sides, bet_why = _ls_follow_sides(ctx, spot, secs_left, "position", open_sides=open_sides)
+        sigma_s = ctx.get("sigma_s")
+        if sigma_s is None and ctx.get("sigma_5m"):
+            sigma_s = float(ctx["sigma_5m"]) / math.sqrt(300.0)
+        model_spot = basis_tracker.adjust(spot) if ctx.get("use_basis") else spot
+        fair_up = indicators.fair_prob_up(model_spot, ctx.get("target_open"), max(0.5, float(secs_left)), sigma_s)
+        if fair_up > 0.5:
+            pred_sides, pred_why = ["UP"], f"prediction UP {fair_up:.1%}"
+        elif fair_up < 0.5:
+            pred_sides, pred_why = ["DOWN"], f"prediction DOWN {1.0 - fair_up:.1%}"
+        else:
+            pred_sides, pred_why = [], "prediction 50/50"
+        if bet_sides is None:
+            return (pred_sides if pred_sides else None), f"{bet_why}, {pred_why}"
+        return sorted(set(bet_sides) | set(pred_sides)), f"{bet_why}, {pred_why}"
 
     return None, "any direction"
 
@@ -4955,7 +4977,7 @@ async def update_loop():
 
             # Publish trade_ctx ONLY IF active window strike is genuinely captured and market is valid!
             if (poly_snapshot.get("ok") and strike_open is not None and target_open is not None
-                    and poly_snapshot.get("market") and time_left_min > 0.0):
+                    and poly_snapshot.get("market") and time_left_min > 0.1):
                 tok_up = poly_snapshot.get("token_ids", {}).get("up")
                 tok_down = poly_snapshot.get("token_ids", {}).get("down")
                 if tok_up:
@@ -5935,7 +5957,8 @@ async def get_settings():
             "min_book_liquidity_usd": settings.MIN_BOOK_LIQUIDITY_USD,
             "max_book_age_s": settings.MAX_BOOK_AGE_S,
             "max_odds_enabled": getattr(settings, "MAX_ODDS_ENABLED", False),
-            "max_odds_cents": getattr(settings, "MAX_ODDS_CENTS", 25.0)
+            "max_odds_cents": getattr(settings, "MAX_ODDS_CENTS", 25.0),
+            "use_clob_ws_book": getattr(settings, "USE_CLOB_WS_BOOK", True)
         },
         "flip": {
             "enabled": settings.FLIP_ENABLED,
@@ -6285,6 +6308,11 @@ async def post_settings(new_settings: Dict[str, Any]):
                 settings.MAX_ODDS_CENTS = float(e["max_odds_cents"])
             except (TypeError, ValueError):
                 pass
+        if "use_clob_ws_book" in e:
+            old_wsb = getattr(settings, "USE_CLOB_WS_BOOK", True)
+            settings.USE_CLOB_WS_BOOK = bool(e["use_clob_ws_book"])
+            if settings.USE_CLOB_WS_BOOK != old_wsb:
+                log_message(f"CLOB WS BOOK: {'ON (live WebSocket orderbook)' if settings.USE_CLOB_WS_BOOK else 'OFF (1-second REST polling)'}")
 
     if "flip" in new_settings:
         f = new_settings["flip"]

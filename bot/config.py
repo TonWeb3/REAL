@@ -125,6 +125,7 @@ class Settings(BaseSettings):
     MAX_BOOK_AGE_S: float = 3.0
     MAX_ODDS_ENABLED: bool = False      # only enter if odds are <= MAX_ODDS_CENTS (cheap underdog entries)
     MAX_ODDS_CENTS: float = 25.0        # max odds threshold in cents (default 25c)
+    USE_CLOB_WS_BOOK: bool = True       # True = live CLOB WS book (incremental subscribe); False = 1s REST polls only
 
     # After a window expires, wait this long for Polymarket to publish its OFFICIAL
     # outcome before falling back to our own close-vs-open comparison. Without this the
@@ -369,6 +370,8 @@ def load_settings():
                     base_settings.MAX_ODDS_ENABLED = _to_bool(ev["max_odds_enabled"], base_settings.MAX_ODDS_ENABLED)
                 if "max_odds_cents" in ev:
                     base_settings.MAX_ODDS_CENTS = _to_float(ev["max_odds_cents"], base_settings.MAX_ODDS_CENTS)
+                if "use_clob_ws_book" in ev:
+                    base_settings.USE_CLOB_WS_BOOK = _to_bool(ev["use_clob_ws_book"], base_settings.USE_CLOB_WS_BOOK)
 
             if "settlement" in config_data:
                 st = config_data["settlement"]

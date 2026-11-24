@@ -35,7 +35,8 @@
     "min_book_liquidity_usd": 20,
     "max_book_age_s": 3,
     "max_odds_enabled": false,
-    "max_odds_cents": 25
+    "max_odds_cents": 25,
+    "use_clob_ws_book": true
   },
   "underdog": {
     "enabled": false,
@@ -71,7 +72,7 @@
     "max_per_window": 1,
     "look_s": 60.0,
     "cutoff_s": 3.0,
-    "follow": "any",
+    "follow": "either",
     "order_type": "FOK",
     "sniper_enabled": true,
     "sniper_order_type": "FOK",
